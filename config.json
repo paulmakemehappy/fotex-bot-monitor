@@ -1,0 +1,8 @@
+{
+  "apiBaseUrl": "https://api.sallinggroup.com/v1/ecommerce/foetex",
+  "taskCsvPath": "./tasks.csv",
+  "profileCsvPath": "./profile.csv",
+  "monitorCsvPath": "./monitor.csv",
+  "monitorStatePath": "./.monitor-state.json",
+  "discordWebhookUrl": ""
+}

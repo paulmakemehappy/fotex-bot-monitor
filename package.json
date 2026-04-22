@@ -1,0 +1,28 @@
+{
+  "name": "foetex-checkout-bot",
+  "version": "1.0.0",
+  "private": true,
+  "author": {
+    "name": "paulmakemehappy"
+  },
+  "description": "Foetex checkout payment bot",
+  "main": "dist/cli.js",
+  "scripts": {
+    "checkout": "tsx src/cli.ts",
+    "monitor": "tsx src/monitor.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/cli.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@browser-tls-fetch/darwin-arm64": "^0.0.7",
+    "browser-tls-fetch": "^0.0.8",
+    "csv-parse": "^5.6.0",
+    "tough-cookie": "^6.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.17",
+    "tsx": "^4.20.6",
+    "typescript": "^5.8.3"
+  }
+}

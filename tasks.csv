@@ -1,0 +1,2 @@
+taskId,profileId,productId,quantity,retryDelayMs,maxRetries
+1,1,100526817,1,2000,10
