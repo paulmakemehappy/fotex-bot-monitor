@@ -357,6 +357,12 @@ async function sendDiscordCheckoutNotification(
     body: JSON.stringify({ embeds: [embed] })
   });
 
+  if (response.status === 429) {
+    const raw = await response.text();
+    console.warn(`Discord webhook rate limited (checkout embed skipped): ${raw}`);
+    return;
+  }
+
   if (!response.ok) {
     const raw = await response.text();
     throw new Error(`Discord webhook failed: ${response.status} ${response.statusText} ${raw}`);

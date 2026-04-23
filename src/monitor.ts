@@ -23,11 +23,15 @@ type ProductHit = {
   is_reservable?: boolean;
   display_sales_price?: string;
   sales_price?: number;
+  online_from?: string;
+  epoch_updated_at?: number;
 };
 
 type AlgoliaResponse = {
   results?: Array<{
     hits?: ProductHit[];
+    page?: number;
+    nbPages?: number;
   }>;
 };
 
@@ -69,25 +73,13 @@ const ALGOLIA_ATTRIBUTES = [
   "sold_online",
   "is_reservable",
   "display_sales_price",
-  "sales_price"
+  "sales_price",
+  "online_from",
+  "epoch_updated_at"
 ];
 
-const PRODUCTS_REQUEST_BODY = {
-  requests: [
-    {
-      indexName: "prod_FOETEX_PRODUCTS",
-      params: new URLSearchParams({
-        query: "",
-        attributesToRetrieve: JSON.stringify(ALGOLIA_ATTRIBUTES),
-        filters: ALGOLIA_FILTERS,
-        distinct: "true",
-        page: "0",
-        hitsPerPage: "100"
-      }).toString()
-    }
-  ],
-  strategy: "none"
-};
+const HITS_PER_PAGE = 100;
+const MAX_PAGES = 20;
 
 async function main(): Promise<void> {
   const settings = loadAppSettings();
@@ -147,6 +139,7 @@ async function runMonitorCycle(
       const name = (product.name || "").toLowerCase();
       return name.includes(task.keyword.toLowerCase());
     });
+    matchedProducts.sort(sortByNewestRelease);
     logTask(task.taskId, "Keyword matching complete", { matches: matchedProducts.length });
 
     const previousTaskState = state.tasks[task.taskId]?.products || {};
@@ -261,6 +254,31 @@ function loadState(statePath: string): MonitorState {
 }
 
 async function fetchProducts(): Promise<ProductHit[]> {
+  const allHits: ProductHit[] = [];
+  let page = 0;
+  let nbPages = 1;
+
+  while (page < nbPages && page < MAX_PAGES) {
+    const payload = await fetchProductsPage(page);
+    const result = payload.results?.[0];
+    const hits = Array.isArray(result?.hits) ? result.hits : [];
+    allHits.push(...hits);
+
+    nbPages = Math.max(1, Number(result?.nbPages || 1));
+    page += 1;
+  }
+
+  logMonitor("Fetched paginated Algolia results", {
+    pagesFetched: page,
+    totalPages: nbPages,
+    hits: allHits.length,
+    hitsPerPage: HITS_PER_PAGE
+  });
+
+  return allHits;
+}
+
+async function fetchProductsPage(page: number): Promise<AlgoliaResponse> {
   const response = await fetch(PRODUCTS_ENDPOINT, {
     method: "POST",
     headers: {
@@ -270,7 +288,7 @@ async function fetchProducts(): Promise<ProductHit[]> {
       "x-algolia-application-id": "DRP4O45G5T",
       Referer: "https://www.foetex.dk/"
     },
-    body: JSON.stringify(PRODUCTS_REQUEST_BODY)
+    body: JSON.stringify(buildProductsRequestBody(page))
   });
 
   if (!response.ok) {
@@ -278,8 +296,29 @@ async function fetchProducts(): Promise<ProductHit[]> {
     throw new Error(`Monitor request failed: ${response.status} ${response.statusText} ${raw}`);
   }
 
-  const payload = (await response.json()) as AlgoliaResponse;
-  return Array.isArray(payload.results?.[0]?.hits) ? payload.results[0].hits : [];
+  return (await response.json()) as AlgoliaResponse;
+}
+
+function buildProductsRequestBody(page: number): {
+  requests: Array<{ indexName: string; params: string }>;
+  strategy: string;
+} {
+  return {
+    requests: [
+      {
+        indexName: "prod_FOETEX_PRODUCTS",
+        params: new URLSearchParams({
+          query: "",
+          attributesToRetrieve: JSON.stringify(ALGOLIA_ATTRIBUTES),
+          filters: ALGOLIA_FILTERS,
+          distinct: "true",
+          page: String(page),
+          hitsPerPage: String(HITS_PER_PAGE)
+        }).toString()
+      }
+    ],
+    strategy: "none"
+  };
 }
 
 function getProductId(product: ProductHit): string | null {
@@ -395,6 +434,12 @@ async function sendDiscordMessage(webhookUrl: string, content: string): Promise<
     body: JSON.stringify({ content })
   });
 
+  if (response.status === 429) {
+    const raw = await response.text();
+    console.warn(`Discord webhook rate limited (startup ping skipped): ${raw}`);
+    return;
+  }
+
   if (!response.ok) {
     const raw = await response.text();
     throw new Error(`Discord webhook failed: ${response.status} ${response.statusText} ${raw}`);
@@ -410,6 +455,12 @@ async function sendDiscordEmbed(webhookUrl: string, embed: DiscordEmbed): Promis
     body: JSON.stringify({ embeds: [embed] })
   });
 
+  if (response.status === 429) {
+    const raw = await response.text();
+    console.warn(`Discord webhook rate limited (embed skipped): ${raw}`);
+    return;
+  }
+
   if (!response.ok) {
     const raw = await response.text();
     throw new Error(`Discord webhook failed: ${response.status} ${response.statusText} ${raw}`);
@@ -419,6 +470,28 @@ async function sendDiscordEmbed(webhookUrl: string, embed: DiscordEmbed): Promis
 function isPurchasable(product: ProductHit): boolean {
   const soldOnline = product.sold_online !== false;
   return soldOnline && isInStockOnline(product);
+}
+
+function sortByNewestRelease(a: ProductHit, b: ProductHit): number {
+  const aTs = extractReleaseTimestamp(a);
+  const bTs = extractReleaseTimestamp(b);
+  return bTs - aTs;
+}
+
+function extractReleaseTimestamp(product: ProductHit): number {
+  if (typeof product.epoch_updated_at === "number" && Number.isFinite(product.epoch_updated_at)) {
+    return product.epoch_updated_at * 1000;
+  }
+
+  if (typeof product.online_from === "string" && product.online_from.trim()) {
+    const isoLike = product.online_from.replace(" ", "T").replace("+00", "Z");
+    const parsed = Date.parse(isoLike);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+
+  return 0;
 }
 
 function truncateText(value: string, maxLength: number): string {
